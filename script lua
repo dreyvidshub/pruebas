@@ -1,54 +1,57 @@
 -- =====================================================
--- AUTO BUY CARPET — GUI STANDALONE
--- Compra alfombras/prompts de compra automáticamente
+-- AUTO BUY + AUTO SELL — Script combinado
 -- =====================================================
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 
 -- =====================================================
 -- CONFIG
 -- =====================================================
-local CONFIG = {
-    Enabled       = false,
-    Radius        = 30,       -- studs de distancia para comprar
-    ScanInterval  = 0.5,      -- cada cuánto busca prompts
-    BuyDelay      = 0.05,     -- delay entre disparos
-    AutoKickAfter = true,     -- kick al comprar (por si querés desconectar)
-    Keybind       = Enum.KeyCode.N,
+local Buy = {
+    Enabled = false,
+    Radius = 30,
+    Count = 0,
+    Status = "Esperando...",
+    Keybind = Enum.KeyCode.N,
+}
+
+local Sell = {
+    Enabled = false,
+    Count = 0,
+    Interval = 0.2,
+    Keybind = Enum.KeyCode.M,
 }
 
 -- =====================================================
--- UTILS
+-- AUTO BUY
 -- =====================================================
-local function getPlayerRoot()
+local function getRoot()
     local char = LocalPlayer.Character
     if not char then return nil end
     return char:FindFirstChild("HumanoidRootPart")
 end
 
-local function getPrompts()
+local function getBuyPrompts()
     local list = {}
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("ProximityPrompt") then
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
             local at = (obj.ActionText or ""):lower()
-            if at:find("purchase") or at:find("buy") then
-                local parent = obj.Parent
+            if at:find("purchase") or at:find("buy") or at:find("comprar") then
+                local p = obj.Parent
                 local pos
-                if parent and parent:IsA("Attachment") then
-                    pos = parent.WorldPosition
-                elseif parent and parent:IsA("BasePart") then
-                    pos = parent.Position
-                elseif parent and parent.Parent and parent.Parent:IsA("BasePart") then
-                    pos = parent.Parent.Position
+                if p and p:IsA("Attachment") then
+                    pos = p.WorldPosition
+                elseif p and p:IsA("BasePart") then
+                    pos = p.Position
+                elseif p and p.Parent and p.Parent:IsA("BasePart") then
+                    pos = p.Parent.Position
                 end
                 if pos then
-                    table.insert(list, { prompt = obj, pos = pos, parent = parent })
+                    table.insert(list, { prompt = obj, pos = pos })
                 end
             end
         end
@@ -56,38 +59,16 @@ local function getPrompts()
     return list
 end
 
-local function getClosestPrompt(rootPos)
-    local best, bestDist = nil, CONFIG.Radius
-    for _, item in ipairs(getPrompts()) do
-        local d = (item.pos - rootPos).Magnitude
-        if d < bestDist then
-            bestDist = d
-            best = item
-        end
-    end
-    return best, bestDist
-end
-
--- =====================================================
--- COMPRA
--- =====================================================
-local function tryBuy(promptData)
-    if not promptData or not promptData.prompt or not promptData.prompt.Parent then
-        return false
-    end
-    local prompt = promptData.prompt
-    -- Bajar el hold para que dispare al instante
+local function tryBuy(data)
+    if not data or not data.prompt or not data.prompt.Parent then return false end
+    local prompt = data.prompt
     pcall(function()
         prompt.HoldDuration = 0
         prompt.RequiresLineOfSight = false
         prompt.MaxActivationDistance = 100
     end)
-    -- Intentar disparar
-    local ok = pcall(function()
-        fireproximityprompt(prompt, 0)
-    end)
+    local ok = pcall(function() fireproximityprompt(prompt, 0) end)
     if not ok then
-        -- Fallback: simular input
         pcall(function()
             prompt:InputHoldBegin()
             task.wait(0.02)
@@ -97,216 +78,231 @@ local function tryBuy(promptData)
     return true
 end
 
--- =====================================================
--- LOOP PRINCIPAL
--- =====================================================
-local lastScan = 0
-local boughtCount = 0
-local statusText = "Esperando..."
-
+local lastBuyScan = 0
 RunService.Heartbeat:Connect(function()
-    if not CONFIG.Enabled then return end
+    if not Buy.Enabled then return end
     local now = tick()
-    if now - lastScan < CONFIG.ScanInterval then return end
-    lastScan = now
+    if now - lastBuyScan < 0.5 then return end
+    lastBuyScan = now
 
-    local root = getPlayerRoot()
+    local root = getRoot()
     if not root then
-        statusText = "Sin personaje"
+        Buy.Status = "Sin personaje"
         return
     end
 
-    local target, dist = getClosestPrompt(root.Position)
-    if not target then
-        statusText = "Nada cerca"
+    local best, bestDist = nil, Buy.Radius
+    for _, item in ipairs(getBuyPrompts()) do
+        local d = (item.pos - root.Position).Magnitude
+        if d < bestDist then
+            bestDist = d
+            best = item
+        end
+    end
+
+    if not best then
+        Buy.Status = "Nada cerca"
         return
     end
 
-    statusText = string.format("Comprando: %s (%.1fm)", target.prompt.ActionText or "?", dist)
-    if tryBuy(target) then
-        boughtCount += 1
-        task.wait(CONFIG.BuyDelay)
+    Buy.Status = string.format("Comprando (%.1fm)", bestDist)
+    if tryBuy(best) then
+        Buy.Count += 1
+        task.wait(0.05)
     end
+end)
+
+-- =====================================================
+-- AUTO SELL
+-- =====================================================
+local function getMyPlot()
+    local plots = Workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+    local name = LocalPlayer.Name:lower()
+    local dn = (LocalPlayer.DisplayName or ""):lower()
+    for _, plot in ipairs(plots:GetChildren()) do
+        local sign = plot:FindFirstChild("PlotSign")
+        if sign then
+            local sg = sign:FindFirstChildWhichIsA("SurfaceGui", true)
+            local tl = sg and sg:FindFirstChildWhichIsA("TextLabel", true)
+            if tl and tl.Text then
+                local low = tl.Text:lower()
+                if low:find(name, 1, true) or (dn ~= "" and low:find(dn, 1, true)) then
+                    return plot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function sellAll()
+    local plot = getMyPlot()
+    if not plot then return 0 end
+    local ap = plot:FindFirstChild("AnimalPodiums")
+    if not ap then return 0 end
+    local n = 0
+    for _, podium in ipairs(ap:GetChildren()) do
+        for _, d in ipairs(podium:GetDescendants()) do
+            if d:IsA("ProximityPrompt") and d.Enabled then
+                local at = (d.ActionText or ""):lower()
+                if at:find("sell") or at:find("vender") then
+                    pcall(function()
+                        d.HoldDuration = 0
+                        fireproximityprompt(d, 0)
+                    end)
+                    n += 1
+                    task.wait(0.02)
+                end
+            end
+        end
+    end
+    return n
+end
+
+local lastSell = 0
+RunService.Heartbeat:Connect(function()
+    if not Sell.Enabled then return end
+    local now = tick()
+    if now - lastSell < Sell.Interval then return end
+    lastSell = now
+    local n = sellAll()
+    if n > 0 then Sell.Count += n end
 end)
 
 -- =====================================================
 -- GUI
 -- =====================================================
-local GuiParent
-pcall(function() GuiParent = gethui() end)
-if not GuiParent then pcall(function() GuiParent = game:GetService("CoreGui") end) end
-if not GuiParent then GuiParent = LocalPlayer:WaitForChild("PlayerGui") end
+local parent = gethui and gethui() or game:GetService("CoreGui")
+if parent:FindFirstChild("AutoBuySellGui") then parent.AutoBuySellGui:Destroy() end
 
-if GuiParent:FindFirstChild("AutoBuyGui") then
-    GuiParent.AutoBuyGui:Destroy()
+local sg = Instance.new("ScreenGui")
+sg.Name = "AutoBuySellGui"
+sg.ResetOnSpawn = false
+sg.Parent = parent
+
+local function makePanel(title, yPos, color)
+    local f = Instance.new("Frame")
+    f.Size = UDim2.fromOffset(200, 110)
+    f.Position = UDim2.fromOffset(20, yPos)
+    f.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
+    f.BorderSizePixel = 0
+    f.Active = true
+    f.Draggable = true
+    f.Parent = sg
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 12)
+    local st = Instance.new("UIStroke", f)
+    st.Color = color or Color3.fromRGB(90, 120, 160)
+
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(1, 0, 0, 20)
+    t.Position = UDim2.new(0, 0, 0, 6)
+    t.BackgroundTransparency = 1
+    t.Text = title
+    t.TextColor3 = Color3.fromRGB(240, 244, 255)
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 14
+    t.Parent = f
+
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -20, 0, 32)
+    b.Position = UDim2.new(0, 10, 0, 30)
+    b.BackgroundColor3 = Color3.fromRGB(40, 25, 30)
+    b.Text = "OFF"
+    b.TextColor3 = Color3.fromRGB(230, 120, 120)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 13
+    b.AutoButtonColor = false
+    b.Parent = f
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+
+    local info = Instance.new("TextLabel")
+    info.Size = UDim2.new(1, -10, 0, 14)
+    info.Position = UDim2.new(0, 5, 0, 66)
+    info.BackgroundTransparency = 1
+    info.Text = "..."
+    info.TextColor3 = Color3.fromRGB(140, 170, 220)
+    info.Font = Enum.Font.GothamMedium
+    info.TextSize = 10
+    info.Parent = f
+
+    local keyInfo = Instance.new("TextLabel")
+    keyInfo.Size = UDim2.new(1, 0, 0, 12)
+    keyInfo.Position = UDim2.new(0, 0, 1, -16)
+    keyInfo.BackgroundTransparency = 1
+    keyInfo.Text = ""
+    keyInfo.TextColor3 = Color3.fromRGB(110, 130, 170)
+    keyInfo.Font = Enum.Font.GothamMedium
+    keyInfo.TextSize = 9
+    keyInfo.Parent = f
+
+    return f, b, info, keyInfo
 end
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoBuyGui"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.IgnoreGuiInset = true
-ScreenGui.DisplayOrder = 999
-ScreenGui.Parent = GuiParent
+-- Panel BUY
+local buyFrame, buyBtn, buyInfo, buyKey = makePanel("AUTO BUY", 20, Color3.fromRGB(90, 140, 220))
+buyKey.Text = "Toggle: N"
 
--- Panel
-local Panel = Instance.new("Frame")
-Panel.Name = "Panel"
-Panel.Size = UDim2.fromOffset(260, 165)
-Panel.Position = UDim2.new(0, 20, 0, 20)
-Panel.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
-Panel.BorderSizePixel = 0
-Panel.Active = true
-Panel.Draggable = true
-Panel.ClipsDescendants = true
-Panel.Parent = ScreenGui
-
-local PanelCorner = Instance.new("UICorner")
-PanelCorner.CornerRadius = UDim.new(0, 14)
-PanelCorner.Parent = Panel
-
-local PanelGrad = Instance.new("UIGradient")
-PanelGrad.Color = ColorSequence.new(Color3.fromRGB(24, 28, 40), Color3.fromRGB(12, 14, 20))
-PanelGrad.Rotation = 135
-PanelGrad.Parent = Panel
-
-local PanelStroke = Instance.new("UIStroke")
-PanelStroke.Color = Color3.fromRGB(90, 120, 160)
-PanelStroke.Thickness = 1.2
-PanelStroke.Transparency = 0.3
-PanelStroke.Parent = Panel
-
-task.spawn(function()
-    while ScreenGui.Parent do
-        TweenService:Create(PanelStroke, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Color = Color3.fromRGB(120, 180, 255), Transparency = 0.1, Thickness = 1.8,
-        }):Play()
-        task.wait(1.8)
-        TweenService:Create(PanelStroke, TweenInfo.new(1.8, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut), {
-            Color = Color3.fromRGB(90, 120, 160), Transparency = 0.3, Thickness = 1.2,
-        }):Play()
-        task.wait(1.8)
-    end
-end)
-
--- Título
-local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -28, 0, 24)
-Title.Position = UDim2.new(0, 14, 0, 10)
-Title.BackgroundTransparency = 1
-Title.Text = "AUTO BUY"
-Title.TextColor3 = Color3.fromRGB(240, 244, 255)
-Title.Font = Enum.Font.GothamBold
-Title.TextSize = 15
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Parent = Panel
-
-local TitleGrad = Instance.new("UIGradient")
-TitleGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 255, 255)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120, 200, 255)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(180, 140, 255)),
-})
-TitleGrad.Parent = Title
-
-local Subtitle = Instance.new("TextLabel")
-Subtitle.Size = UDim2.new(1, -28, 0, 14)
-Subtitle.Position = UDim2.new(0, 14, 0, 32)
-Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "Compra automáticamente"
-Subtitle.TextColor3 = Color3.fromRGB(140, 150, 170)
-Subtitle.Font = Enum.Font.GothamMedium
-Subtitle.TextSize = 10
-Subtitle.TextXAlignment = Enum.TextXAlignment.Left
-Subtitle.Parent = Panel
-
--- Botón ON/OFF
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(1, -28, 0, 38)
-ToggleBtn.Position = UDim2.new(0, 14, 0, 58)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 25, 30)
-ToggleBtn.Text = "Auto Buy: OFF"
-ToggleBtn.TextColor3 = Color3.fromRGB(230, 120, 120)
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextSize = 12
-ToggleBtn.AutoButtonColor = false
-ToggleBtn.Parent = Panel
-
-local ToggleCorner = Instance.new("UICorner")
-ToggleCorner.CornerRadius = UDim.new(0, 8)
-ToggleCorner.Parent = ToggleBtn
-
-local ToggleStroke = Instance.new("UIStroke")
-ToggleStroke.Color = Color3.fromRGB(120, 50, 60)
-ToggleStroke.Thickness = 1
-ToggleStroke.Transparency = 0.4
-ToggleStroke.Parent = ToggleBtn
-
-local function updateToggle(on)
+local function setBuy(on)
+    Buy.Enabled = on
     if on then
-        TweenService:Create(ToggleBtn, TweenInfo.new(0.2), {
-            BackgroundColor3 = Color3.fromRGB(20, 45, 35),
-            TextColor3 = Color3.fromRGB(100, 230, 160),
-        }):Play()
-        TweenService:Create(ToggleStroke, TweenInfo.new(0.2), {
-            Color = Color3.fromRGB(50, 150, 100),
-        }):Play()
-        ToggleBtn.Text = "Auto Buy: ON"
+        buyBtn.Text = "ON"
+        buyBtn.BackgroundColor3 = Color3.fromRGB(20, 45, 35)
+        buyBtn.TextColor3 = Color3.fromRGB(100, 230, 160)
     else
-        TweenService:Create(ToggleBtn, TweenInfo.new(0.2), {
-            BackgroundColor3 = Color3.fromRGB(40, 25, 30),
-            TextColor3 = Color3.fromRGB(230, 120, 120),
-        }):Play()
-        TweenService:Create(ToggleStroke, TweenInfo.new(0.2), {
-            Color = Color3.fromRGB(120, 50, 60),
-        }):Play()
-        ToggleBtn.Text = "Auto Buy: OFF"
+        buyBtn.Text = "OFF"
+        buyBtn.BackgroundColor3 = Color3.fromRGB(40, 25, 30)
+        buyBtn.TextColor3 = Color3.fromRGB(230, 120, 120)
     end
 end
 
-ToggleBtn.MouseButton1Click:Connect(function()
-    CONFIG.Enabled = not CONFIG.Enabled
-    updateToggle(CONFIG.Enabled)
+buyBtn.MouseButton1Click:Connect(function()
+    setBuy(not Buy.Enabled)
 end)
 
--- Info
-local Info = Instance.new("TextLabel")
-Info.Size = UDim2.new(1, -28, 0, 14)
-Info.Position = UDim2.new(0, 14, 0, 102)
-Info.BackgroundTransparency = 1
-Info.Text = "Compras: 0 · Nada cerca"
-Info.TextColor3 = Color3.fromRGB(140, 170, 220)
-Info.Font = Enum.Font.GothamMedium
-Info.TextSize = 10
-Info.TextXAlignment = Enum.TextXAlignment.Left
-Info.Parent = Panel
-
--- Keybind info
-local KeyInfo = Instance.new("TextLabel")
-KeyInfo.Size = UDim2.new(1, -28, 0, 14)
-KeyInfo.Position = UDim2.new(0, 14, 1, -22)
-KeyInfo.BackgroundTransparency = 1
-KeyInfo.Text = "Toggle: N"
-KeyInfo.TextColor3 = Color3.fromRGB(110, 130, 170)
-KeyInfo.Font = Enum.Font.GothamMedium
-KeyInfo.TextSize = 10
-KeyInfo.TextXAlignment = Enum.TextXAlignment.Left
-KeyInfo.Parent = Panel
-
--- Actualizar info
 task.spawn(function()
-    while ScreenGui.Parent do
-        Info.Text = string.format("Compras: %d · %s", boughtCount, statusText)
-        task.wait(0.2)
+    while sg.Parent do
+        buyInfo.Text = string.format("Compras: %d · %s", Buy.Count, Buy.Status)
+        task.wait(0.3)
     end
 end)
 
--- Keybind
+-- Panel SELL
+local sellFrame, sellBtn, sellInfo, sellKey = makePanel("AUTO SELL", 140, Color3.fromRGB(120, 200, 140))
+sellKey.Text = "Toggle: M"
+
+local function setSell(on)
+    Sell.Enabled = on
+    if on then
+        sellBtn.Text = "ON"
+        sellBtn.BackgroundColor3 = Color3.fromRGB(20, 45, 35)
+        sellBtn.TextColor3 = Color3.fromRGB(100, 230, 160)
+    else
+        sellBtn.Text = "OFF"
+        sellBtn.BackgroundColor3 = Color3.fromRGB(40, 25, 30)
+        sellBtn.TextColor3 = Color3.fromRGB(230, 120, 120)
+    end
+end
+
+sellBtn.MouseButton1Click:Connect(function()
+    setSell(not Sell.Enabled)
+end)
+
+task.spawn(function()
+    while sg.Parent do
+        sellInfo.Text = "Vendidos: " .. Sell.Count
+        task.wait(0.3)
+    end
+end)
+
+-- Keybinds
 UserInputService.InputBegan:Connect(function(input, gp)
     if gp then return end
-    if input.KeyCode == CONFIG.Keybind then
-        CONFIG.Enabled = not CONFIG.Enabled
-        updateToggle(CONFIG.Enabled)
+    if input.KeyCode == Buy.Keybind then
+        setBuy(not Buy.Enabled)
+    elseif input.KeyCode == Sell.Keybind then
+        setSell(not Sell.Enabled)
     end
 end)
 
-print("[Auto Buy] Cargado. Toggle: N")
+print("[Auto Buy + Sell] Listo. Buy: N · Sell: M")
