@@ -1,5 +1,5 @@
 -- =====================================================
--- AUTO BUY + AUTO SELL — Script combinado
+-- AUTO BUY + AUTO SELL (solo tu base)
 -- =====================================================
 
 local Players = game:GetService("Players")
@@ -24,6 +24,7 @@ local Sell = {
     Count = 0,
     Interval = 0.2,
     Keybind = Enum.KeyCode.M,
+    Status = "Sin base",
 }
 
 -- =====================================================
@@ -113,24 +114,55 @@ RunService.Heartbeat:Connect(function()
 end)
 
 -- =====================================================
--- AUTO SELL
+-- AUTO SELL — Detección de TU base (3 métodos)
 -- =====================================================
+local function isMyPlotBySign(plot)
+    local sign = plot:FindFirstChild("PlotSign")
+    if not sign then return false end
+    local sg = sign:FindFirstChildWhichIsA("SurfaceGui", true)
+    local tl = sg and sg:FindFirstChildWhichIsA("TextLabel", true)
+    if not tl or not tl.Text then return false end
+    local low = tl.Text:lower()
+    local name = LocalPlayer.Name:lower()
+    local dn = (LocalPlayer.DisplayName or ""):lower()
+    if low:find(name, 1, true) then return true end
+    if dn ~= "" and low:find(dn, 1, true) then return true end
+    return false
+end
+
+local function isMyPlotByName(plot)
+    local n = plot.Name:lower()
+    local name = LocalPlayer.Name:lower()
+    if n == name then return true end
+    if n:find(name, 1, true) then return true end
+    return false
+end
+
+local function isMyPlotByOwner(plot)
+    -- Algunos juegos ponen el dueño en un atributo o en un ValueObject
+    local ownerAttr = plot:GetAttribute("Owner")
+    if ownerAttr then
+        if ownerAttr == LocalPlayer or ownerAttr == LocalPlayer.Name or ownerAttr == LocalPlayer.UserId then
+            return true
+        end
+    end
+    -- Buscar un ObjectValue / StringValue llamado Owner / Player
+    for _, child in ipairs(plot:GetDescendants()) do
+        if child:IsA("ObjectValue") and (child.Name == "Owner" or child.Name == "Player") then
+            if child.Value == LocalPlayer then return true end
+        elseif child:IsA("StringValue") and (child.Name == "Owner" or child.Name == "PlayerName") then
+            if child.Value == LocalPlayer.Name then return true end
+        end
+    end
+    return false
+end
+
 local function getMyPlot()
     local plots = Workspace:FindFirstChild("Plots")
     if not plots then return nil end
-    local name = LocalPlayer.Name:lower()
-    local dn = (LocalPlayer.DisplayName or ""):lower()
     for _, plot in ipairs(plots:GetChildren()) do
-        local sign = plot:FindFirstChild("PlotSign")
-        if sign then
-            local sg = sign:FindFirstChildWhichIsA("SurfaceGui", true)
-            local tl = sg and sg:FindFirstChildWhichIsA("TextLabel", true)
-            if tl and tl.Text then
-                local low = tl.Text:lower()
-                if low:find(name, 1, true) or (dn ~= "" and low:find(dn, 1, true)) then
-                    return plot
-                end
-            end
+        if isMyPlotBySign(plot) or isMyPlotByName(plot) or isMyPlotByOwner(plot) then
+            return plot
         end
     end
     return nil
@@ -138,7 +170,11 @@ end
 
 local function sellAll()
     local plot = getMyPlot()
-    if not plot then return 0 end
+    if not plot then
+        Sell.Status = "Sin base"
+        return 0
+    end
+    Sell.Status = "Vendiendo en " .. plot.Name
     local ap = plot:FindFirstChild("AnimalPodiums")
     if not ap then return 0 end
     local n = 0
@@ -183,7 +219,7 @@ sg.Parent = parent
 
 local function makePanel(title, yPos, color)
     local f = Instance.new("Frame")
-    f.Size = UDim2.fromOffset(200, 110)
+    f.Size = UDim2.fromOffset(210, 110)
     f.Position = UDim2.fromOffset(20, yPos)
     f.BackgroundColor3 = Color3.fromRGB(15, 17, 23)
     f.BorderSizePixel = 0
@@ -224,6 +260,8 @@ local function makePanel(title, yPos, color)
     info.TextColor3 = Color3.fromRGB(140, 170, 220)
     info.Font = Enum.Font.GothamMedium
     info.TextSize = 10
+    info.TextXAlignment = Enum.TextXAlignment.Left
+    info.TextTruncate = Enum.TextTruncate.AtEnd
     info.Parent = f
 
     local keyInfo = Instance.new("TextLabel")
@@ -256,9 +294,7 @@ local function setBuy(on)
     end
 end
 
-buyBtn.MouseButton1Click:Connect(function()
-    setBuy(not Buy.Enabled)
-end)
+buyBtn.MouseButton1Click:Connect(function() setBuy(not Buy.Enabled) end)
 
 task.spawn(function()
     while sg.Parent do
@@ -269,7 +305,7 @@ end)
 
 -- Panel SELL
 local sellFrame, sellBtn, sellInfo, sellKey = makePanel("AUTO SELL", 140, Color3.fromRGB(120, 200, 140))
-sellKey.Text = "Toggle: M"
+sellKey.Text = "Toggle: M · Solo MI base"
 
 local function setSell(on)
     Sell.Enabled = on
@@ -284,13 +320,11 @@ local function setSell(on)
     end
 end
 
-sellBtn.MouseButton1Click:Connect(function()
-    setSell(not Sell.Enabled)
-end)
+sellBtn.MouseButton1Click:Connect(function() setSell(not Sell.Enabled) end)
 
 task.spawn(function()
     while sg.Parent do
-        sellInfo.Text = "Vendidos: " .. Sell.Count
+        sellInfo.Text = string.format("Vendidos: %d · %s", Sell.Count, Sell.Status)
         task.wait(0.3)
     end
 end)
@@ -305,4 +339,4 @@ UserInputService.InputBegan:Connect(function(input, gp)
     end
 end)
 
-print("[Auto Buy + Sell] Listo. Buy: N · Sell: M")
+print("[Auto Buy + Sell] Listo. Buy: N · Sell: M (solo tu base)")
