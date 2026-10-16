@@ -1,21 +1,22 @@
 --[[
-    Dreyvid Hub - GUI de Actividad/Mantenimiento
-    Con sistema de integridad propio
-    Coloca IntegrityModule en ReplicatedStorage/Modules/
+    DREYVID HUB - GUI de Activación + Sistema de Integridad
+    Un solo archivo, sin dependencias externas
+    Coloca en StarterPlayer > StarterPlayerScripts (LocalScript)
 --]]
 
+-- ============================================================
+-- SERVICIOS
+-- ============================================================
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Carga el módulo de integridad
-local Integrity = require(ReplicatedStorage:WaitForChild("Modules"):WaitForChild("IntegrityModule"))
-
--- ============================
+-- ============================================================
 -- CONFIGURACIÓN
--- ============================
+-- ============================================================
 local CONFIG = {
     Titulo = "DREYVID HUB",
     Subtitulo = "SISTEMA DE ACTIVACIÓN",
@@ -35,21 +36,246 @@ local CONFIG = {
     LinkDiscord = "https://discord.gg/TRE4PnNXD",
 }
 
--- ============================
--- HELPERS
--- ============================
+-- ============================================================
+-- HELPER
+-- ============================================================
 local function new(className, props, children)
     local inst = Instance.new(className)
-    for k, v in pairs(props or {}) do inst[k] = v end
-    for _, c in ipairs(children or {}) do c.Parent = inst end
+    for k, v in pairs(props or {}) do
+        inst[k] = v
+    end
+    for _, c in ipairs(children or {}) do
+        c.Parent = inst
+    end
     return inst
 end
 
-local UserInputService = game:GetService("UserInputService")
+-- ============================================================
+-- SISTEMA DE INTEGRIDAD (inline)
+-- ============================================================
+local Integrity = {
+    activo = false,
+    restaurando = false,
+    registros = {},
+    conexiones = {},
+    hijosConocidos = {},
+    guardName = "DreyvidGuard_" .. tostring(math.random(100000, 999999)),
+    reparaciones = 0,
+}
 
--- ============================
+local function leerPropiedad(inst, prop)
+    local ok, valor = pcall(function() return inst[prop] end)
+    return ok and valor or nil
+end
+
+local function escribirPropiedad(inst, prop, valor)
+    pcall(function() inst[prop] = valor end)
+end
+
+local function guardarPropiedades(inst)
+    local props = {}
+
+    if inst:IsA("ScreenGui") then
+        props.ResetOnSpawn = inst.ResetOnSpawn
+        props.IgnoreGuiInset = inst.IgnoreGuiInset
+        props.DisplayOrder = inst.DisplayOrder
+        props.Enabled = inst.Enabled
+    end
+
+    if inst:IsA("GuiObject") then
+        props.Size = inst.Size
+        props.Position = inst.Position
+        props.AnchorPoint = inst.AnchorPoint
+        props.BackgroundColor3 = inst.BackgroundColor3
+        props.BackgroundTransparency = inst.BackgroundTransparency
+        props.BorderSizePixel = inst.BorderSizePixel
+        props.ZIndex = inst.ZIndex
+        props.Visible = inst.Visible
+        props.Rotation = inst.Rotation
+    end
+
+    if inst:IsA("TextLabel") or inst:IsA("TextButton") or inst:IsA("TextBox") then
+        props.Text = inst.Text
+        props.TextColor3 = inst.TextColor3
+        props.TextSize = inst.TextSize
+        props.TextTransparency = inst.TextTransparency
+        props.Font = inst.Font
+        props.TextScaled = inst.TextScaled
+        props.TextWrapped = inst.TextWrapped
+    end
+
+    if inst:IsA("ImageLabel") or inst:IsA("ImageButton") then
+        props.Image = inst.Image
+        props.ImageColor3 = inst.ImageColor3
+        props.ImageTransparency = inst.ImageTransparency
+        props.ScaleType = inst.ScaleType
+    end
+
+    if inst:IsA("UIStroke") then
+        props.Color = inst.Color
+        props.Thickness = inst.Thickness
+        props.Transparency = inst.Transparency
+    end
+
+    if inst:IsA("UICorner") then
+        props.CornerRadius = inst.CornerRadius
+    end
+
+    return props
+end
+
+local function registrar(inst, padreOriginal)
+    if not inst then return nil end
+
+    local props = guardarPropiedades(inst)
+    if not next(props) then return nil end
+
+    local registro = {
+        instancia = inst,
+        propiedades = props,
+        padre = padreOriginal or inst.Parent,
+    }
+    table.insert(Integrity.registros, registro)
+
+    table.insert(Integrity.conexiones, inst.Changed:Connect(function(prop)
+        if not Integrity.activo or Integrity.restaurando then return end
+        if props[prop] == nil then return end
+
+        local actual = leerPropiedad(inst, prop)
+        if actual ~= props[prop] then
+            Integrity.reparaciones += 1
+            Integrity.restaurando = true
+            escribirPropiedad(inst, prop, props[prop])
+            Integrity.restaurando = false
+        end
+    end))
+
+    if registro.padre then
+        table.insert(Integrity.conexiones, inst.AncestryChanged:Connect(function()
+            if not Integrity.activo or Integrity.restaurando then return end
+            if inst.Parent == registro.padre then return end
+
+            Integrity.reparaciones += 1
+            Integrity.restaurando = true
+            pcall(function() inst.Parent = registro.padre end)
+            Integrity.restaurando = false
+        end))
+    end
+
+    return registro
+end
+
+local function repararTodo()
+    if not Integrity.activo or Integrity.restaurando then return end
+    Integrity.restaurando = true
+
+    for _, reg in ipairs(Integrity.registros) do
+        local inst = reg.instancia
+        if not inst or not inst.Parent then
+            if reg.padre and reg.padre.Parent then
+                pcall(function() inst.Parent = reg.padre end)
+            end
+        else
+            for prop, valor in pairs(reg.propiedades) do
+                local actual = leerPropiedad(inst, prop)
+                if actual ~= valor then
+                    Integrity.reparaciones += 1
+                    escribirPropiedad(inst, prop, valor)
+                end
+            end
+        end
+    end
+
+    Integrity.restaurando = false
+end
+
+local function activarIntegridad(gui)
+    if not gui or not gui.Parent then
+        warn("[Integrity] GUI inválida")
+        return false
+    end
+
+    -- Limpia conexiones previas
+    for _, conn in ipairs(Integrity.conexiones) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(Integrity.conexiones)
+    table.clear(Integrity.registros)
+    table.clear(Integrity.hijosConocidos)
+    Integrity.reparaciones = 0
+
+    registrar(gui, gui.Parent)
+
+    for _, desc in ipairs(gui:GetDescendants()) do
+        registrar(desc, desc.Parent)
+    end
+
+    for _, hijo in ipairs(gui:GetChildren()) do
+        Integrity.hijosConocidos[hijo] = true
+    end
+
+    table.insert(Integrity.conexiones, gui.ChildAdded:Connect(function(hijo)
+        if not Integrity.activo or Integrity.restaurando then return end
+        if Integrity.hijosConocidos[hijo] then return end
+        Integrity.reparaciones += 1
+        pcall(function() hijo:Destroy() end)
+    end))
+
+    table.insert(Integrity.conexiones, gui.ChildRemoved:Connect(function(hijo)
+        if not Integrity.activo or Integrity.restaurando then return end
+        if not Integrity.hijosConocidos[hijo] then return end
+        Integrity.reparaciones += 1
+        Integrity.restaurando = true
+        pcall(function() hijo.Parent = gui end)
+        Integrity.restaurando = false
+    end))
+
+    Integrity.activo = true
+
+    pcall(function()
+        RunService:UnbindFromRenderStep(Integrity.guardName)
+    end)
+    RunService:BindToRenderStep(Integrity.guardName,
+        Enum.RenderPriority.Last.Value + 500,
+        repararTodo
+    )
+
+    return true
+end
+
+local function desactivarIntegridad()
+    Integrity.activo = false
+
+    for _, conn in ipairs(Integrity.conexiones) do
+        pcall(function() conn:Disconnect() end)
+    end
+
+    table.clear(Integrity.conexiones)
+    table.clear(Integrity.registros)
+    table.clear(Integrity.hijosConocidos)
+
+    pcall(function()
+        RunService:UnbindFromRenderStep(Integrity.guardName)
+    end)
+end
+
+-- ============================================================
 -- SCREEN GUI
--- ============================
+-- ============================================================
+-- Limpia GUIs previas
+for _, gui in ipairs(LocalPlayer.PlayerGui:GetChildren()) do
+    if gui.Name == "DreyvidHubActivation" then
+        gui:Destroy()
+    end
+end
+pcall(function()
+    for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+        if gui.Name == "DreyvidHubActivation" then
+            gui:Destroy()
+        end
+    end
+end)
+
 local ScreenGui = new("ScreenGui", {
     Name = "DreyvidHubActivation",
     ResetOnSpawn = false,
@@ -59,7 +285,7 @@ local ScreenGui = new("ScreenGui", {
     Parent = LocalPlayer:WaitForChild("PlayerGui"),
 })
 
--- Fondo oscuro con blur
+-- Fondo
 local Fondo = new("Frame", {
     Name = "Fondo",
     Size = UDim2.fromScale(1, 1),
@@ -69,9 +295,9 @@ local Fondo = new("Frame", {
     Parent = ScreenGui,
 })
 
--- ============================
--- VENTANA PRINCIPAL
--- ============================
+-- ============================================================
+-- VENTANA
+-- ============================================================
 local Ventana = new("Frame", {
     Name = "Ventana",
     AnchorPoint = Vector2.new(0.5, 0.5),
@@ -87,16 +313,11 @@ local Ventana = new("Frame", {
         Thickness = 1.5,
         Transparency = 0.3,
     }),
-    new("UIGradient", {
-        Rotation = 90,
-        Color = ColorSequence.new({
-            ColorSequenceKeypoint.new(0, Color3.fromRGB(28, 30, 36)),
-            ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 20, 24)),
-        }),
-    }),
 })
 
--- Barra superior
+-- ============================================================
+-- HEADER
+-- ============================================================
 local Header = new("Frame", {
     Name = "Header",
     Size = UDim2.new(1, 0, 0, 56),
@@ -107,7 +328,6 @@ local Header = new("Frame", {
     new("UICorner", { CornerRadius = UDim.new(0, 14) }),
 })
 
--- Cuadrar esquinas inferiores del header
 new("Frame", {
     Size = UDim2.new(1, 0, 0.5, 0),
     Position = UDim2.fromScale(0, 0.5),
@@ -116,7 +336,7 @@ new("Frame", {
     Parent = Header,
 })
 
--- Logo circular
+-- Logo
 local Logo = new("Frame", {
     Name = "Logo",
     AnchorPoint = Vector2.new(0, 0.5),
@@ -144,7 +364,6 @@ local Logo = new("Frame", {
     }),
 })
 
--- Título
 new("TextLabel", {
     Name = "Titulo",
     Size = UDim2.new(1, -180, 0, 22),
@@ -158,7 +377,6 @@ new("TextLabel", {
     Parent = Header,
 })
 
--- Subtítulo
 new("TextLabel", {
     Name = "Subtitulo",
     Size = UDim2.new(1, -180, 0, 14),
@@ -172,7 +390,7 @@ new("TextLabel", {
     Parent = Header,
 })
 
--- Botón cerrar (X)
+-- Botón X
 local BotonCerrar = new("TextButton", {
     Name = "BotonCerrar",
     AnchorPoint = Vector2.new(1, 0.5),
@@ -200,9 +418,9 @@ BotonCerrar.MouseLeave:Connect(function()
         { BackgroundTransparency = 0.35, Size = UDim2.fromOffset(34, 34) }):Play()
 end)
 
--- ============================
+-- ============================================================
 -- PANEL DE ESTADO
--- ============================
+-- ============================================================
 local EstadoPanel = new("Frame", {
     Name = "EstadoPanel",
     Position = UDim2.fromOffset(16, 76),
@@ -219,7 +437,6 @@ local EstadoPanel = new("Frame", {
     }),
 })
 
--- Indicador de estado (círculo)
 local Indicador = new("Frame", {
     Name = "Indicador",
     AnchorPoint = Vector2.new(0, 0.5),
@@ -237,7 +454,6 @@ local Indicador = new("Frame", {
     }),
 })
 
--- Texto de estado
 local TextoEstado = new("TextLabel", {
     Name = "TextoEstado",
     Position = UDim2.fromOffset(44, 12),
@@ -251,7 +467,6 @@ local TextoEstado = new("TextLabel", {
     Parent = EstadoPanel,
 })
 
--- Descripción del estado
 local TextoDesc = new("TextLabel", {
     Name = "TextoDesc",
     Position = UDim2.fromOffset(44, 34),
@@ -265,7 +480,6 @@ local TextoDesc = new("TextLabel", {
     Parent = EstadoPanel,
 })
 
--- Contador de reparaciones (anti-tamper)
 local TextoReparaciones = new("TextLabel", {
     Name = "TextoReparaciones",
     Position = UDim2.fromOffset(44, 50),
@@ -279,9 +493,9 @@ local TextoReparaciones = new("TextLabel", {
     Parent = EstadoPanel,
 })
 
--- ============================
--- BOTÓN DE ACTIVACIÓN (TOGGLE PRINCIPAL)
--- ============================
+-- ============================================================
+-- BOTÓN ACTIVAR
+-- ============================================================
 local BotonActivar = new("TextButton", {
     Name = "BotonActivar",
     Position = UDim2.fromOffset(16, 160),
@@ -300,7 +514,6 @@ local BotonActivar = new("TextButton", {
     }),
 })
 
--- Texto del botón
 local TextoBoton = new("TextLabel", {
     Name = "TextoBoton",
     Size = UDim2.new(1, -100, 0, 22),
@@ -327,7 +540,6 @@ local SubTextoBoton = new("TextLabel", {
     Parent = BotonActivar,
 })
 
--- Toggle visual (switch)
 local Toggle = new("Frame", {
     Name = "Toggle",
     AnchorPoint = Vector2.new(1, 0.5),
@@ -352,9 +564,9 @@ local ToggleCircle = new("Frame", {
     new("UICorner", { CornerRadius = UDim.new(1, 0) }),
 })
 
--- ============================
--- BOTONES DE ENLACES
--- ============================
+-- ============================================================
+-- BOTONES DE ENLACE
+-- ============================================================
 local ContenedorEnlaces = new("Frame", {
     Name = "Enlaces",
     Position = UDim2.fromOffset(16, 230),
@@ -437,9 +649,9 @@ new("TextLabel", {
     Parent = Ventana,
 })
 
--- ============================
+-- ============================================================
 -- LÓGICA DE ACTIVACIÓN
--- ============================
+-- ============================================================
 local activado = false
 
 local function actualizarUI()
@@ -487,9 +699,8 @@ BotonActivar.MouseButton1Click:Connect(function()
     actualizarUI()
 
     if activado then
-        -- Aquí activas la lógica real de tu hub
         print("[Dreyvid Hub] Hub ACTIVADO")
-        -- Ejemplo: cargar script principal, activar función, etc.
+        -- 👉 AQUÍ va la lógica real de tu hub
     else
         print("[Dreyvid Hub] Hub DESACTIVADO")
     end
@@ -515,24 +726,24 @@ BotonActivar.MouseLeave:Connect(function()
     end
 end)
 
--- ============================
+-- ============================================================
 -- ANIMACIÓN DE ENTRADA
--- ============================
+-- ============================================================
 TweenService:Create(Ventana,
     TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
     { Size = UDim2.fromOffset(420, 320) }
 ):Play()
 
--- ============================
--- LÓGICA DE CIERRE
--- ============================
+-- ============================================================
+-- CIERRE
+-- ============================================================
 local cerrando = false
 
 local function cerrarVentana()
     if cerrando then return end
     cerrando = true
 
-    Integrity.desactivar()
+    desactivarIntegridad()
 
     local tw = TweenService:Create(Ventana,
         TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.In),
@@ -558,29 +769,25 @@ UserInputService.InputBegan:Connect(function(input, processed)
     end
 end)
 
--- ============================
--- ACTIVAR INTEGRIDAD (anti-tamper)
--- ============================
--- Espera un frame para que todo esté padre-ado
-task.wait(0.1)
+-- ============================================================
+-- ACTIVAR INTEGRIDAD
+-- ============================================================
+task.wait(0.15)
 
-local okIntegrity = Integrity.activar(ScreenGui, {
-    protegerHijos = true,
-    restaurarAutomatico = true,
-})
+local okIntegridad = activarIntegridad(ScreenGui)
 
-if okIntegrity then
+if okIntegridad then
     print("[Dreyvid Hub] 🛡️ Sistema de integridad ACTIVADO")
 else
     warn("[Dreyvid Hub] ⚠️ No se pudo activar la integridad")
 end
 
--- Actualiza el contador de reparaciones cada segundo
+-- Actualiza el contador cada segundo
 task.spawn(function()
     while ScreenGui.Parent do
         task.wait(1)
         if TextoReparaciones and TextoReparaciones.Parent then
-            local n = Integrity.contarReparaciones()
+            local n = Integrity.reparaciones
             if n > 0 then
                 TextoReparaciones.Text = "🛡️ Reparaciones: " .. tostring(n)
                 TextoReparaciones.TextColor3 = Color3.fromRGB(255, 180, 60)
@@ -589,13 +796,6 @@ task.spawn(function()
                 TextoReparaciones.TextColor3 = Color3.fromRGB(100, 180, 255)
             end
         end
-    end
-end)
-
--- Detecta si la GUI fue borrada y avisa
-ScreenGui.AncestryChanged:Connect(function()
-    if not ScreenGui.Parent then
-        warn("[Dreyvid Hub] GUI eliminada externamente")
     end
 end)
 
