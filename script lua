@@ -277,7 +277,7 @@ while true do
             -- No borra el recuerdo por desapariciones breves al cargar/soltar.
             -- Si no vuelve a verse durante 3 minutos, se considera otro spawn.
             for fingerprint, sentState in pairs(sentEggFingerprints) do
-                if not presentFingerprints[fingerprint]
+                if not observedFingerprints[fingerprint]
                     and now - sentState.lastSeenAt >= FINGERPRINT_ABSENCE_SECONDS then
                     sentEggFingerprints[fingerprint] = nil
                 end
