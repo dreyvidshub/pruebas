@@ -6,7 +6,7 @@ local HttpService = game:GetService("HttpService")
 
 local CONFIG = {
     WebhookName = "Dreyvid hub-Finder",
-    WebhookAvatar = "https://media.discordapp.net/attachments/1558526322517745724/1558917121310859424/Imagen_de_Codex_26_sept_2026_14_27_56.png?ex=6acd2e35&is=6acbdcb5&hm=b1c75760f6e62c6733cfd7eeadf92370bd79fd4dcfc344eab2b42b88266dec94&=&format=webp&quality=lossless&width=1024&height=1024",
+    WebhookAvatar = "https://media.discordapp.net/attachments/1560449770089218168/1560659102663970876/Imagen_de_Codex_26_sept_2026_14_27_56.png?ex=6ad3848d&is=6ad2330d&hm=702b230abd0fa184816081aa8e02d4a0edca7ff25209b17f2651113e3854cc7e&=&format=webp&quality=lossless&width=640&height=640",
     FooterText = "Drey Hub | Finder | discord.gg/dbkShvQGHf",
     Webhooks = {
         { Name = "10 M/s a 500 M/s", Url = "https://discord.com/api/webhooks/1560450586242195487/TTDLC0G8FacFVW0SmiBezfS7RMhroE-hQlYYmwHycV7F4rq1wmavrgoErWv5yAyd3D8p" },
