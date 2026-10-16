@@ -1,36 +1,173 @@
--- Envia un unico mensaje "hola" a tres webhooks de Discord.
--- Coloca este Script en ServerScriptService de tu propia experiencia.
--- Activa Game Settings > Security > Allow HTTP Requests.
--- Estos webhooks se compartieron en el chat: rótalos en Discord despues de probar.
+-- Dreyvid hub-Finder para TU propia experiencia de Roblox.
+-- Coloca este Script en ServerScriptService.
+-- Cada huevo debe tener los atributos:
+--   EarningPerSecond (number), EggName (string opcional), ImageUrl (string opcional).
+-- Los huevos deben estar bajo Workspace.Eggs.
+-- Activa Allow HTTP Requests y crea los secretos indicados abajo en Creator Dashboard.
 
 local HttpService = game:GetService("HttpService")
-local WEBHOOK_URLS = {
-    "https://discord.com/api/webhooks/1560450586242195487/TTDLC0G8FacFVW0SmiBezfS7RMhroE-hQlYYmwHycV7F4rq1wmavrgoErWv5yAyd3D8p",
-    "https://discord.com/api/webhooks/1558542287750037585/LZIBkA8ixTNF8h-K6LRfuHdQjwkQbl6cw2mvdBNCOECfmfPQSXK7BlDLVMHuu4eaDXBG",
-    "https://discord.com/api/webhooks/1560450713534857287/l_d25EDgkRNw2RAbL2bSwqU3Y8OU8vDFMs0AdnW5oI1oWfqubJ2PMNIauLNPYvj8tEO-",
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local CONFIG = {
+    ScanIntervalSeconds = 1,
+    MinimumEarning = 10_000_000,
+    HighTierMinimum = 500_000_000,
+    FingerprintAbsenceSeconds = 180,
+    EggsFolderName = "Eggs",
+    WebhookName = "Dreyvid hub-Finder",
+    WebhookAvatar = "", -- URL estable opcional; configura el mismo avatar en los 3 webhooks.
+    InviteText = "Drey Hub | discord.gg/dbkShvQGHf",
+    -- Rota los tokens expuestos en el chat. Guarda SOLO el token nuevo en Roblox Secrets.
+    -- Secret names: DreyFinder_10_500_Token, DreyFinder_500_Plus_Token, DreyFinder_Theft_Token
+    Webhooks = {
+        Low = { Id = "1560450586242195487", SecretName = "DreyFinder_10_500_Token" },
+        High = { Id = "1558542287750037585", SecretName = "DreyFinder_500_Plus_Token" },
+        Theft = { Id = "1560450713534857287", SecretName = "DreyFinder_Theft_Token" },
+    },
 }
 
-local payload = HttpService:JSONEncode({
-    content = "hola",
-    allowed_mentions = { parse = {} },
-})
+local function formatMoney(value)
+    if value >= 1e12 then return string.format("%.2fT", value / 1e12) end
+    if value >= 1e9 then return string.format("%.2fB", value / 1e9) end
+    if value >= 1e6 then return string.format("%.2fM", value / 1e6) end
+    if value >= 1e3 then return string.format("%.2fK", value / 1e3) end
+    return tostring(math.floor(value))
+end
 
-for index, webhookUrl in ipairs(WEBHOOK_URLS) do
-    local ok, result = pcall(function()
+local function getWebhookUrl(config)
+    local token = HttpService:GetSecret(config.SecretName)
+    return token:AddPrefix("https://discord.com/api/webhooks/" .. config.Id .. "/")
+end
+
+local function postEmbed(webhookConfig, title, description, imageUrl, color)
+    local embed = {
+        title = title,
+        description = description,
+        color = color,
+        footer = { text = CONFIG.InviteText },
+    }
+    if type(imageUrl) == "string" and string.match(imageUrl, "^https://") then
+        embed.thumbnail = { url = imageUrl }
+    end
+
+    local payload = {
+        username = CONFIG.WebhookName,
+        allowed_mentions = { parse = {} },
+        embeds = { embed },
+    }
+    if CONFIG.WebhookAvatar ~= "" then
+        payload.avatar_url = CONFIG.WebhookAvatar
+    end
+
+    local ok, response = pcall(function()
         return HttpService:RequestAsync({
-            Url = webhookUrl,
+            Url = getWebhookUrl(webhookConfig),
             Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body = payload,
+            Body = HttpService:JSONEncode(payload),
         })
     end)
 
     if not ok then
-        warn(string.format("HolaDiscord: webhook %d fallo: %s", index, tostring(result)))
-    elseif not result.Success then
-        warn(string.format("HolaDiscord: webhook %d respondio HTTP %s: %s",
-            index, tostring(result.StatusCode), tostring(result.Body)))
-    else
-        print(string.format("HolaDiscord: mensaje enviado al webhook %d.", index))
+        warn("Drey Finder: fallo HTTP: " .. tostring(response))
+        return false
     end
+    if not response.Success then
+        warn(string.format("Drey Finder: Discord respondio HTTP %s: %s",
+            tostring(response.StatusCode), tostring(response.Body)))
+        return false
+    end
+    return true
+end
+
+local function getBestEgg()
+    local folder = Workspace:FindFirstChild(CONFIG.EggsFolderName)
+    if not folder then
+        return nil, "No existe Workspace." .. CONFIG.EggsFolderName
+    end
+
+    local best
+    local observed = {}
+    for _, egg in ipairs(folder:GetDescendants()) do
+        local earning = tonumber(egg:GetAttribute("EarningPerSecond"))
+        if earning and earning >= CONFIG.MinimumEarning then
+            local name = tostring(egg:GetAttribute("EggName") or egg.Name)
+            local size = tonumber(egg:GetAttribute("AssetScale")) or 1
+            local fingerprint = table.concat({ string.lower(name), tostring(earning), string.format("%.4f", size) }, "|")
+            observed[fingerprint] = true
+
+            if egg:GetAttribute("Stolen") ~= true then
+                local candidate = {
+                    name = name,
+                    earning = earning,
+                    image = egg:GetAttribute("ImageUrl"),
+                    fingerprint = fingerprint,
+                }
+                if not best or candidate.earning > best.earning then
+                    best = candidate
+                end
+            end
+        end
+    end
+    return best, nil, observed
+end
+
+local sentFingerprints = {}
+local lastTopFingerprint = nil
+local warnedFolder = false
+
+-- El script del juego debe disparar este evento SOLO tras confirmar un robo en el servidor:
+-- ReplicatedStorage.DreyEggStolenConfirmed:Fire("Nombre del huevo")
+local theftEvent = ReplicatedStorage:FindFirstChild("DreyEggStolenConfirmed")
+if not theftEvent then
+    theftEvent = Instance.new("BindableEvent")
+    theftEvent.Name = "DreyEggStolenConfirmed"
+    theftEvent.Parent = ReplicatedStorage
+end
+if theftEvent:IsA("BindableEvent") then
+    theftEvent.Event:Connect(function(eggName)
+        local safeName = tostring(eggName or "Huevo")
+        postEmbed(CONFIG.Webhooks.Theft, "🥚 Robo confirmado", "**" .. safeName .. "**", nil, 0xE74C3C)
+    end)
+else
+    warn("Drey Finder: DreyEggStolenConfirmed debe ser un BindableEvent.")
+end
+
+while true do
+    local best, scanError, observed = getBestEgg()
+    if scanError then
+        if not warnedFolder then warn("Drey Finder: " .. scanError) end
+        warnedFolder = true
+    else
+        warnedFolder = false
+        local now = os.clock()
+        for fingerprint in pairs(observed or {}) do
+            if sentFingerprints[fingerprint] then
+                sentFingerprints[fingerprint].lastSeenAt = now
+            end
+        end
+        for fingerprint, state in pairs(sentFingerprints) do
+            if not observed[fingerprint]
+                and now - state.lastSeenAt >= CONFIG.FingerprintAbsenceSeconds then
+                sentFingerprints[fingerprint] = nil
+            end
+        end
+
+        if best then
+            if best.fingerprint ~= lastTopFingerprint and not sentFingerprints[best.fingerprint] then
+                local destination = best.earning >= CONFIG.HighTierMinimum
+                    and CONFIG.Webhooks.High or CONFIG.Webhooks.Low
+                local description = string.format("```%s | $%s/s```", best.name, formatMoney(best.earning))
+                if postEmbed(destination, "🔥 Rare Pet Found", description, best.image,
+                    best.earning >= CONFIG.HighTierMinimum and 0xE74C3C or 0xFFC850) then
+                    sentFingerprints[best.fingerprint] = { lastSeenAt = now }
+                end
+            end
+            lastTopFingerprint = best.fingerprint
+        else
+            lastTopFingerprint = nil
+        end
+    end
+    task.wait(CONFIG.ScanIntervalSeconds)
 end
