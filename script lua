@@ -1,151 +1,36 @@
--- Drey Finder para una experiencia propia de Roblox.
--- Coloca este Script en ServerScriptService.
--- Cada huevo debe tener el atributo numérico EarningPerSecond.
--- Los huevos deben estar dentro de Workspace.Eggs.
--- Escanea cada segundo y avisa solo cuando cambia el mejor huevo elegible.
+-- Envia un unico mensaje "hola" a tres webhooks de Discord.
+-- Coloca este Script en ServerScriptService de tu propia experiencia.
+-- Activa Game Settings > Security > Allow HTTP Requests.
+-- Estos webhooks se compartieron en el chat: rótalos en Discord despues de probar.
 
 local HttpService = game:GetService("HttpService")
-local Workspace = game:GetService("Workspace")
-
-local CONFIG = {
-    ScanIntervalSeconds = 1,
-    MinimumEarning = 10000000,
-    HighTierMinimum = 500000000,
-    EggsFolderName = "Eggs",
-    Webhook10MTo500M = "PEGA_AQUI_WEBHOOK_10M_A_MENOS_DE_500M",
-    Webhook500MPlus = "PEGA_AQUI_WEBHOOK_500M_O_MAS",
-    WebhookName = "Dreyvid hub-Finder",
-    -- Usa una URL estable de imagen, o deja la cadena vacía.
-    WebhookAvatar = "",
-    InviteText = "Drey Hub | discord.gg/dbkShvQGHf",
+local WEBHOOK_URLS = {
+    "https://discord.com/api/webhooks/1560450586242195487/TTDLC0G8FacFVW0SmiBezfS7RMhroE-hQlYYmwHycV7F4rq1wmavrgoErWv5yAyd3D8p",
+    "https://discord.com/api/webhooks/1558542287750037585/LZIBkA8ixTNF8h-K6LRfuHdQjwkQbl6cw2mvdBNCOECfmfPQSXK7BlDLVMHuu4eaDXBG",
+    "https://discord.com/api/webhooks/1560450713534857287/l_d25EDgkRNw2RAbL2bSwqU3Y8OU8vDFMs0AdnW5oI1oWfqubJ2PMNIauLNPYvj8tEO-",
 }
 
-local function formatMoney(value)
-    if value >= 1e12 then
-        return string.format("%.2fT", value / 1e12)
-    elseif value >= 1e9 then
-        return string.format("%.2fB", value / 1e9)
-    elseif value >= 1e6 then
-        return string.format("%.2fM", value / 1e6)
-    elseif value >= 1e3 then
-        return string.format("%.2fK", value / 1e3)
-    end
-    return tostring(math.floor(value))
-end
+local payload = HttpService:JSONEncode({
+    content = "hola",
+    allowed_mentions = { parse = {} },
+})
 
-local function chooseWebhook(earning)
-    if earning >= CONFIG.HighTierMinimum then
-        return CONFIG.Webhook500MPlus
-    end
-    return CONFIG.Webhook10MTo500M
-end
-
-local function findBestEgg()
-    local folder = Workspace:FindFirstChild(CONFIG.EggsFolderName)
-    if not folder then
-        return nil, "No existe Workspace." .. CONFIG.EggsFolderName
-    end
-
-    local best
-    for _, egg in ipairs(folder:GetDescendants()) do
-        local earning = tonumber(egg:GetAttribute("EarningPerSecond"))
-        if earning and earning >= CONFIG.MinimumEarning then
-            local candidate = {
-                instance = egg,
-                name = tostring(egg:GetAttribute("EggName") or egg.Name),
-                earning = earning,
-                rarity = tostring(egg:GetAttribute("Rarity") or "Sin rareza"),
-            }
-            if not best or candidate.earning > best.earning then
-                best = candidate
-            end
-        end
-    end
-
-    return best
-end
-
-local function sendBestEgg(best)
-    local webhook = chooseWebhook(best.earning)
-    if webhook == "" or string.find(webhook, "PEGA_AQUI", 1, true) then
-        warn("Configura el webhook correspondiente en CONFIG.")
-        return false
-    end
-
-    local payload = {
-        username = CONFIG.WebhookName,
-        allowed_mentions = { parse = {} },
-        embeds = {{
-            title = "🥚 Mejor huevo del servidor",
-            description = string.format("**%s**\n`$%s/s`", best.name, formatMoney(best.earning)),
-            color = best.earning >= CONFIG.HighTierMinimum and 0xE74C3C or 0xF1C40F,
-            fields = {{
-                name = "Rareza",
-                value = best.rarity,
-                inline = true,
-            }, {
-                name = "Ganancia",
-                value = "$" .. formatMoney(best.earning) .. "/s",
-                inline = true,
-            }},
-            footer = { text = CONFIG.InviteText },
-        }},
-    }
-
-    if CONFIG.WebhookAvatar ~= "" then
-        payload.avatar_url = CONFIG.WebhookAvatar
-    end
-
-    local ok, response = pcall(function()
+for index, webhookUrl in ipairs(WEBHOOK_URLS) do
+    local ok, result = pcall(function()
         return HttpService:RequestAsync({
-            Url = webhook,
+            Url = webhookUrl,
             Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(payload),
+            Body = payload,
         })
     end)
 
     if not ok then
-        warn("Falló el envío al webhook: " .. tostring(response))
-        return false
+        warn(string.format("HolaDiscord: webhook %d fallo: %s", index, tostring(result)))
+    elseif not result.Success then
+        warn(string.format("HolaDiscord: webhook %d respondio HTTP %s: %s",
+            index, tostring(result.StatusCode), tostring(result.Body)))
+    else
+        print(string.format("HolaDiscord: mensaje enviado al webhook %d.", index))
     end
-    if not response.Success then
-        warn(string.format("Discord respondió HTTP %d: %s", response.StatusCode, response.Body))
-        return false
-    end
-    return true
 end
-
-local lastAnnouncementKey = nil
-local lastAttemptAt = 0
-local RETRY_SECONDS = 15
-local warnedMissingFolder = false
-
-while true do
-    local best, scanError = findBestEgg()
-    if scanError and not warnedMissingFolder then
-        warn(scanError .. ". Crea esa carpeta y coloca allí los huevos de tu experiencia.")
-        warnedMissingFolder = true
-    elseif best then
-        warnedMissingFolder = false
-        -- Si quieres volver a avisar cuando el mismo huevo salga y luego regrese,
-        -- la presencia/ausencia queda incluida en esta clave.
-        local key = table.concat({
-            best.instance:GetFullName(),
-            best.name,
-            tostring(best.earning),
-            best.rarity,
-        }, "|")
-        if key ~= lastAnnouncementKey then
-            if sendBestEgg(best) then
-                lastAnnouncementKey = key
-            end
-        end
-    elseif lastAnnouncementKey ~= nil then
-        -- Reinicia la detección: si vuelve a aparecer un huevo, se anunciará.
-        lastAnnouncementKey = nil
-    end
-
-    task.wait(CONFIG.ScanIntervalSeconds)
-end
-
