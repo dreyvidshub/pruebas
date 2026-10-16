@@ -1,218 +1,24 @@
--- Dreyvid Finder para Volt (uso en tu propia experiencia).
--- Observa los registros del snapshot cada segundo y anuncia solo el huevo #1
--- por producción, en el webhook correspondiente a su rango.
+-- Prueba visual de los tres webhooks de Drey Finder.
+-- Reemplaza cada valor por una URL NUEVA de webhook antes de ejecutar.
+-- Este archivo solo manda un embed de prueba; no consulta el juego.
 
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
-
 local CONFIG = {
-    ScanInterval = 1,
-    MinimumEarning = 100000000,
-    HighTierMinimum = 500000000, -- 500 M entra en el webhook alto.
-    LowWebhook = "https://discord.com/api/webhooks/1560450586242195487/TTDLC0G8FacFVW0SmiBezfS7RMhroE-hQlYYmwHycV7F4rq1wmavrgoErWv5yAyd3D8p",
-    HighWebhook = "https://discord.com/api/webhooks/1558542287750037585/LZIBkA8ixTNF8h-K6LRfuHdQjwkQbl6cw2mvdBNCOECfmfPQSXK7BlDLVMHuu4eaDXBG",
-    TheftWebhook = "https://discord.com/api/webhooks/1560450713534857287/l_d25EDgkRNw2RAbL2bSwqU3Y8OU8vDFMs0AdnW5oI1oWfqubJ2PMNIauLNPYvj8tEO-",
     WebhookName = "Dreyvid hub-Finder",
     WebhookAvatar = "https://media.discordapp.net/attachments/1558526322517745724/1558917121310859424/Imagen_de_Codex_26_sept_2026_14_27_56.png?ex=6acd2e35&is=6acbdcb5&hm=b1c75760f6e62c6733cfd7eeadf92370bd79fd4dcfc344eab2b42b88266dec94&=&format=webp&quality=lossless&width=1024&height=1024",
     FooterText = "Drey Hub | Finder | discord.gg/dbkShvQGHf",
+    Webhooks = {
+        { Name = "10 M/s a 500 M/s", Url = "https://discord.com/api/webhooks/1560450586242195487/TTDLC0G8FacFVW0SmiBezfS7RMhroE-hQlYYmwHycV7F4rq1wmavrgoErWv5yAyd3D8p" },
+        { Name = "500 M/s o más", Url = "https://discord.com/api/webhooks/1558542287750037585/LZIBkA8ixTNF8h-K6LRfuHdQjwkQbl6cw2mvdBNCOECfmfPQSXK7BlDLVMHuu4eaDXBG" },
+        { Name = "Información", Url = "https://discord.com/api/webhooks/1560450713534857287/l_d25EDgkRNw2RAbL2bSwqU3Y8OU8vDFMs0AdnW5oI1oWfqubJ2PMNIauLNPYvj8tEO-" },
+    },
 }
 
--- Imágenes conocidas. Si no hay una imagen para el huevo, el embed la omite.
-local IMAGE_BY_NAME = {
-    ["Kitsune"] = "https://images-ext-1.discordapp.net/external/PJE92wVQEi8SIgfBqWlxHfsyRohgcjQRP5MxAaH5R-4/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544967674126401556.png?format=webp&quality=lossless",
-    ["Pegasus"] = "https://images-ext-1.discordapp.net/external/9SDplquZA1vJtde17GhkAfdZ7T8XfbLIJC3IQAgsUHs/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548394519354019922.png?format=webp&quality=lossless",
-    ["Skeleton Horse"] = "https://images-ext-1.discordapp.net/external/SVXTPsP1007hzL3YfDj2rLQWv-ynOdV9CI-jRz3eByA/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548394526190870691.png?format=webp&quality=lossless",
-    ["Gorilla King"] = "https://images-ext-1.discordapp.net/external/5_Mgxu4xQTf8lHH6FUHigsvUgM_v5rq42L1u-MxHBmc/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544971698690850877.png?format=webp&quality=lossless",
-    ["Centaur"] = "https://images-ext-1.discordapp.net/external/YHza_1nSNtuHHHH2N-rEkZhqsQwNYwbPfIJSYgNDyzs/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548396244127195309.png?format=webp&quality=lossless",
-    ["Pure Jellyfish"] = "https://images-ext-1.discordapp.net/external/wKoa9jK3wgxA84VjQ208dOMH82qm6IR7evnzi811tFY/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548394521547767889.png?format=webp&quality=lossless",
-    ["Gargoyle"] = "https://images-ext-1.discordapp.net/external/jmVbl3NyjZnU5QJOyE6WsD60B2hzdVCTkA9zRxcpttQ/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548396246044254378.png?format=webp&quality=lossless",
-    ["Eternal Lunar Dragon"] = "https://images-ext-1.discordapp.net/external/KYyPDwuWruBYZRoX8k4NOl5Ia_pfj8i38uHWGtV3BnQ/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970966537474119.png?format=webp&quality=lossless",
-    ["Mutant Shark"] = "https://images-ext-1.discordapp.net/external/BDL3DSnDKTPONyPLSL9GGrknnGanJinLkv80izwnWXk/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970970547101698.png?format=webp&quality=lossless",
-    ["Stag"] = "https://images-ext-1.discordapp.net/external/BSiupETPOZWnrSXxwvhCtLeeAGOrDpxVfSKM10jvdXE/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970977799180319.png?format=webp&quality=lossless",
-    ["El Maja"] = "https://images-ext-1.discordapp.net/external/3pZRYpvW4DUaTByzHxoeBp9P_FvTPkVoU1ypMo99-N0/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970956403900496.png?format=webp&quality=lossless",
-    ["Ice Dragon"] = "https://images-ext-1.discordapp.net/external/O-kE2_Ttz5AbwpQp5vUXmcBk6LqGkig1-MmIxD4GHug/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970958572359780.png?format=webp&quality=lossless",
-    ["Cosmic Dragon"] = "https://images-ext-1.discordapp.net/external/3UC_fdoaMdz1Te-d8jqXigpvs5j_KJ0CnySeBYTwstM/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970952411193394.png?format=webp&quality=lossless",
-    ["Cosmic Skeleton Boss"] = "https://images-ext-1.discordapp.net/external/Ce62M6-GhGYkPz1MgsKs1Yp0asYEINet4zRb4yZ_a3E/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970954399031357.png?format=webp&quality=lossless",
-    ["Tralaledon"] = "https://images-ext-1.discordapp.net/external/EN4WfmIdxfcUqonR6fEC-nntW0DoYbpygaf3sewfzh8/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970980667953222.png?format=webp&quality=lossless",
-    ["TRex"] = "https://images-ext-1.discordapp.net/external/a0h-nTsRO_uuCFByqh4ExwxGyc_Z9HthlSIY30Jk9Fo/%3Fcb%3D20260903161834/https/static.wikia.nocookie.net/stealanegg/images/f/f8/T-Rex.png/revision/latest?format=webp",
-    ["T-Rex"] = "https://images-ext-1.discordapp.net/external/a0h-nTsRO_uuCFByqh4ExwxGyc_Z9HthlSIY30Jk9Fo/%3Fcb%3D20260903161834/https/static.wikia.nocookie.net/stealanegg/images/f/f8/T-Rex.png/revision/latest?format=webp",
-    ["Phoenix"] = "https://images-ext-1.discordapp.net/external/ybCGVdn3EcxxDByhefPooO4q_YfwNmV2gIYnoXYBMSQ/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970975743840316.png?format=webp&quality=lossless",
-    ["Lava Dragon"] = "https://images-ext-1.discordapp.net/external/GHyEhG1zQmz42-AgT32OyPuRsC0QR3NZkNyCD4XAr5A/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544971686548348968.png?format=webp&quality=lossless",
-    ["Kraken"] = "https://images-ext-1.discordapp.net/external/SWQXCegKedjXp9yjVNnxb6bBtob3fGpamlY1aOwOXbM/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1544970964159172700.png?format=webp&quality=lossless",
-    ["RazorFang"] = "https://images-ext-1.discordapp.net/external/mECjHKOllRFWT3fET1P0yzpoHIesImSHSJM9aC0Zem0/%3Fsize%3D240/https/cdn.discordapp.com/emojis/1548394523506245662.png?format=webp&quality=lossless",
-}
-
-local function findPath(root, path)
-    local current = root
-    -- Acepta rutas copiadas tanto con puntos como con barras.
-    for part in string.gmatch(path, "[^%./]+") do
-        if not current then return nil end
-        current = current:FindFirstChild(part)
-    end
-    return current
-end
-
-local SnapshotRemote
-local function findSnapshotRemote()
-    if SnapshotRemote and SnapshotRemote.Parent then
-        return SnapshotRemote
-    end
-
-    -- Primero prueba la ruta conocida y luego busca el nombre en toda la jerarquía.
-    SnapshotRemote = findPath(ReplicatedStorage, "Packages.Networking.RF/EggWorld/AskFieldEggSnapshot")
-    if SnapshotRemote and SnapshotRemote:IsA("RemoteFunction") then
-        return SnapshotRemote
-    end
-
-    local candidates = {}
-    for _, instance in ipairs(ReplicatedStorage:GetDescendants()) do
-        if instance:IsA("RemoteFunction") then
-            local normalizedName = string.lower(instance.Name):gsub("[^%w]", "")
-            if normalizedName == "askfieldeggsnapshot"
-                or (string.find(normalizedName, "egg", 1, true)
-                    and string.find(normalizedName, "snapshot", 1, true)) then
-                SnapshotRemote = instance
-                return SnapshotRemote
-            end
-            if #candidates < 8 and (string.find(normalizedName, "egg", 1, true)
-                or string.find(normalizedName, "snapshot", 1, true)) then
-                table.insert(candidates, instance:GetFullName())
-            end
-        end
-    end
-
-    local detail = #candidates > 0 and (" Remotos parecidos: " .. table.concat(candidates, "; ")) or " No hay RemoteFunctions con 'egg' o 'snapshot' visibles."
-    return nil, "No se encontró AskFieldEggSnapshot en ReplicatedStorage." .. detail
-end
-
-local Catalog = {}
-pcall(function()
-    local data = ReplicatedStorage:FindFirstChild("Data")
-    local assets = data and data:FindFirstChild("Assets")
-    if assets then
-        local module = require(assets)
-        if type(module) == "table" and type(module.Directory) == "table" then
-            Catalog = module.Directory
-        end
-    end
-end)
-
-local function getHttpRequest()
-    return request or http_request or (syn and syn.request)
-end
-
-local function getEggInfo(assetCategory, record)
-    local entry = Catalog[tostring(assetCategory)]
-    if type(entry) ~= "table" then return nil end
-
-    local earning = tonumber(entry.EarningRate) or 0
-    local scale = tonumber(record.AssetScale) or 1
-    local mutations = record.Mutations
-    local mutationCount = type(mutations) == "table" and #mutations or 0
-    local mutationBonus = 1 + mutationCount * 0.25
-
-    return {
-        name = entry.DisplayName or entry._id or tostring(assetCategory),
-        earning = math.floor(earning * scale * mutationBonus),
-    }
-end
-
-local function formatMoney(value)
-    if value >= 1e12 then return string.format("%.2fT", value / 1e12) end
-    if value >= 1e9 then return string.format("%.2fB", value / 1e9) end
-    if value >= 1e6 then return string.format("%.2fM", value / 1e6) end
-    if value >= 1e3 then return string.format("%.2fK", value / 1e3) end
-    return tostring(math.floor(value))
-end
-
-local function fingerprintEgg(egg)
-    return table.concat({
-        string.lower(egg.name),
-        tostring(egg.earning),
-        string.format("%.4f", egg.size),
-    }, "|")
-end
-
-local function getEligibleEggs()
-    local remote, remoteError = findSnapshotRemote()
-    if not remote then
-        return nil, remoteError
-    end
-
-    local ok, snapshot = pcall(function()
-        return remote:InvokeServer()
-    end)
-    if not ok or type(snapshot) ~= "table" then
-        return nil, "No se pudo leer el snapshot del servidor."
-    end
-
-    local records = snapshot.Records or snapshot
-    if type(records) ~= "table" then return nil end
-
-    local eggs = {}
-    local observedFingerprints = {}
-    for recordKey, record in pairs(records) do
-        if type(record) == "table" and record.AssetCategory then
-            local info = getEggInfo(record.AssetCategory, record)
-            if info and info.earning >= CONFIG.MinimumEarning then
-                local identity = record.Id or record.ID or record.RecordId
-                    or record.Guid or record.GUID or record.UUID or record.Uid
-                    or record.InstanceId or record.InstanceID or recordKey
-                if identity == nil then
-                    -- Fallback estable para snapshots sin UUID visible.
-                    identity = table.concat({
-                        tostring(record.OwnerUserId or record.OwnerId or record.Owner or ""),
-                        tostring(record.Plot or record.PlotId or ""),
-                        tostring(record.Slot or record.SlotId or record.Index or ""),
-                        tostring(record.AssetCategory),
-                        tostring(record.AssetScale or 1),
-                        tostring(record.State),
-                    }, "|")
-                end
-                local egg = {
-                    id = tostring(identity),
-                    name = info.name,
-                    earning = info.earning,
-                    size = tonumber(record.AssetScale) or 1,
-                }
-                observedFingerprints[fingerprintEgg(egg)] = true
-                if record.State == "Slot" then
-                    table.insert(eggs, egg)
-                end
-            end
-        end
-    end
-
-    table.sort(eggs, function(a, b)
-        if a.earning == b.earning then
-            return a.id < b.id
-        end
-        return a.earning > b.earning
-    end)
-    return eggs, nil, observedFingerprints
-end
-
-local function sendToDiscord(best, webhook, includeServerInfo)
-    local httpRequest = getHttpRequest()
-    if type(httpRequest) ~= "function" then
-        return false, "Volt no expone request/http_request/syn.request."
-    end
-
-    local thumbnailUrl = IMAGE_BY_NAME[best.name]
-    local description = string.format("```%s | $%s/s```", best.name, formatMoney(best.earning))
-    local fields = nil
-    if includeServerInfo then
-        local serverId = tostring(game.JobId or "")
-        if serverId == "" then serverId = "No disponible" end
-        local placeId = tostring(game.PlaceId or "")
-        local serverUrl = "https://www.roblox.com/games/start?placeId="
-            .. placeId .. "&gameInstanceId=" .. HttpService:UrlEncode(serverId)
-        fields = {
-            { name = "📱 ID del servidor (móvil)", value = "`" .. serverId .. "`", inline = false },
-            { name = "💻 ID del servidor (PC)", value = "```" .. serverId .. "```", inline = false },
-            { name = "Entrar al servidor", value = "[Abrir servidor](" .. serverUrl .. ")", inline = false },
-        }
+local function sendHello(webhook)
+    if string.sub(webhook.Url, 1, 8) ~= "https://" then
+        warn("Drey Finder prueba: configura el webhook " .. webhook.Name)
+        return
     end
 
     local payload = {
@@ -220,132 +26,31 @@ local function sendToDiscord(best, webhook, includeServerInfo)
         avatar_url = CONFIG.WebhookAvatar,
         embeds = {{
             title = "🔥 Rare Pet Found",
-            description = description,
-            thumbnail = thumbnailUrl and { url = thumbnailUrl } or nil,
-            fields = fields,
+            description = "hola",
             color = 0xFFC850,
             footer = { text = CONFIG.FooterText },
         }},
     }
 
     local ok, response = pcall(function()
-        return httpRequest({
-            Url = webhook,
+        return request({
+            Url = webhook.Url,
             Method = "POST",
             Headers = { ["Content-Type"] = "application/json" },
             Body = HttpService:JSONEncode(payload),
         })
     end)
 
-    if not ok then return false, tostring(response) end
-    if type(response) == "table" and response.StatusCode and response.StatusCode >= 400 then
-        return false, "Discord HTTP " .. tostring(response.StatusCode)
-    end
-    return true
-end
-
-local lastAnnouncedTopKey = nil
-local pendingTop = nil
-local pendingTopKey = nil
-local pendingDeliveries = nil
-local sentEggFingerprints = {}
-local FINGERPRINT_ABSENCE_SECONDS = 180 -- 3 minutos
-local emptyScans = 0
-local lastAttemptAt = -30
-local lastScanError = nil
-local lastSendError = nil
-local MIN_SECONDS_BETWEEN_MESSAGES = 2
-
-while true do
-    local eggs, scanError, observedFingerprints = getEligibleEggs()
-    if scanError then
-        if scanError ~= lastScanError then
-            warn("Drey Finder: " .. scanError)
-            lastScanError = scanError
-        end
+    if not ok then
+        warn("Drey Finder prueba: " .. webhook.Name .. " falló: " .. tostring(response))
+    elseif type(response) == "table" and response.StatusCode and response.StatusCode >= 400 then
+        warn("Drey Finder prueba: " .. webhook.Name .. " respondió HTTP " .. tostring(response.StatusCode))
     else
-        lastScanError = nil
-        if eggs then
-            local now = os.clock()
-            for fingerprint in pairs(observedFingerprints or {}) do
-                local sentState = sentEggFingerprints[fingerprint]
-                if sentState then
-                    sentState.lastSeenAt = now
-                end
-            end
-
-            -- No borra el recuerdo por desapariciones breves al cargar/soltar.
-            -- Si no vuelve a verse durante 3 minutos, se considera otro spawn.
-            for fingerprint, sentState in pairs(sentEggFingerprints) do
-                if not observedFingerprints[fingerprint]
-                    and now - sentState.lastSeenAt >= FINGERPRINT_ABSENCE_SECONDS then
-                    sentEggFingerprints[fingerprint] = nil
-                end
-            end
-
-            local top = eggs[1]
-            if top then
-                emptyScans = 0
-                -- Usa la identidad visible del huevo, no el ID del registro:
-                -- al soltarlo y volverlo a tomar, el juego puede crear otro ID.
-                local key = fingerprintEgg(top)
-                if sentEggFingerprints[key] then
-                    pendingTop = nil
-                    pendingTopKey = nil
-                    pendingDeliveries = nil
-                    lastAnnouncedTopKey = key
-                elseif key ~= lastAnnouncedTopKey then
-                    if key ~= pendingTopKey then
-                        -- Un aviso normal conserva el filtro original; el webhook
-                        -- adicional recibe también los datos del servidor desde 100 M/s.
-                        pendingTop = top
-                        pendingTopKey = key
-                        pendingDeliveries = {{
-                            url = top.earning >= CONFIG.HighTierMinimum
-                                and CONFIG.HighWebhook or CONFIG.LowWebhook,
-                            includeServerInfo = false,
-                        }}
-                    end
-                else
-                    pendingTop = nil
-                    pendingTopKey = nil
-                    pendingDeliveries = nil
-                end
-            else
-                emptyScans += 1
-                if emptyScans >= 3 then
-                    lastAnnouncedTopKey = nil
-                    pendingTop = nil
-                    pendingTopKey = nil
-                    pendingDeliveries = nil
-                end
-            end
-
-            if pendingTop and pendingDeliveries and #pendingDeliveries > 0
-                and now - lastAttemptAt >= MIN_SECONDS_BETWEEN_MESSAGES then
-                local delivery = table.remove(pendingDeliveries, 1)
-                lastAttemptAt = now
-                local sent, sendError = sendToDiscord(pendingTop, delivery.url, delivery.includeServerInfo)
-                if sent then
-                    lastSendError = nil
-                    if #pendingDeliveries == 0 then
-                        lastAnnouncedTopKey = pendingTopKey
-                        sentEggFingerprints[pendingTopKey] = { lastSeenAt = now }
-                        pendingTop = nil
-                        pendingTopKey = nil
-                        pendingDeliveries = nil
-                    end
-                else
-                    if sendError ~= lastSendError then
-                        warn("Drey Finder: " .. tostring(sendError))
-                        lastSendError = sendError
-                    end
-                    table.insert(pendingDeliveries, 1, delivery)
-                end
-            end
-        end
+        print("Drey Finder prueba: mensaje enviado a " .. webhook.Name)
     end
-
-    task.wait(CONFIG.ScanInterval)
 end
 
+for _, webhook in ipairs(CONFIG.Webhooks) do
+    sendHello(webhook)
+    task.wait(1)
+end
